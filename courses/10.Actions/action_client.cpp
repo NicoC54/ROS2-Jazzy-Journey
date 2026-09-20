@@ -22,7 +22,7 @@ public:
   MinimalActionClient() : Node("minimal_action_client")
   {
     // Création du client d'action
-    this->client_ptr_ = rclcpp_action::create_client<Fibonacci>(
+    client_ptr_ = rclcpp_action::create_client<Fibonacci>(
       this,
       "fibonacci");
   }
@@ -33,7 +33,7 @@ public:
     using namespace std::placeholders;
 
     // 1. On attend que le serveur soit en ligne
-    if (!this->client_ptr_->wait_for_action_server(std::chrono::seconds(10))) {
+    if (!client_ptr_->wait_for_action_server(std::chrono::seconds(10))) {
       RCLCPP_ERROR(this->get_logger(), "Le serveur d'action n'est pas disponible.");
       return;
     }
