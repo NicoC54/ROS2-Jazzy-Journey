@@ -52,7 +52,27 @@ Un Publisher et un Subscriber ne communiquent ensemble **que si leurs politiques
 
 C'est exactement la même matrice pour la Durabilité : un Subscriber `TRANSIENT_LOCAL` (qui veut le replay) ne pourra jamais parler à un Publisher `VOLATILE` (qui fait du direct sans enregistrer).
 
-## 5. Exemples de code en C++ (ROS 2 Jazzy)
+
+## 5. Référence complète des méthodes rclcpp::QoS (Pour aller plus loin)
+La classe `rclcpp::QoS` en C++ utilise le *method chaining* (on peut enchaîner les appels). Voici toutes les fonctions disponibles pour configurer ton profil :
+
+**Fiabilité & Durabilité :**
+*   `.reliable()` : Garantit la livraison.
+*   `.best_effort()` : Envoie sans garantie.
+*   `.transient_local()` : Garde les messages pour les abonnés tardifs.
+*   `.durability_volatile()` : Ne garde rien pour les abonnés tardifs.
+
+**Historique :**
+*   `.keep_last(size_t depth)` : Garde seulement les `depth` derniers messages.
+*   `.keep_all()` : Garde tous les messages.
+
+**Paramètres Avancés (Bonus Entretien) :**
+*   `.deadline(rclcpp::Duration)` : Le temps maximum attendu entre deux messages. Si aucun message n'arrive dans ce délai, un événement (callback) est déclenché. Utile pour détecter si un capteur est tombé en panne.
+*   `.lifespan(rclcpp::Duration)` : Durée de vie d'un message. S'il reste bloqué dans la file d'attente plus longtemps que cette durée, il est détruit au lieu d'être lu (évite de traiter des données périmées).
+*   `.liveliness(rmw_qos_liveliness_policy_t)` : Définit comment le nœud prouve qu'il est "vivant" au réseau (`AUTOMATIC` par défaut, ou `MANUAL_BY_TOPIC` pour forcer le développeur à le signaler manuellement).
+*   `.liveliness_lease_duration(rclcpp::Duration)` : Le temps alloué au nœud pour prouver qu'il est vivant avant d'être considéré comme mort par le système.
+
+## 6. Exemples de code en C++ (ROS 2 Jazzy)
 
 Dans ROS 2 Jazzy, on utilise la classe `rclcpp::QoS` pour configurer tout cela.
 
