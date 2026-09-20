@@ -63,10 +63,11 @@ private:
     std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
 };
 
-
+```
 ### B. Ecouter une TF Statique ou dynamique (Tf listener)
 Utile pour écouter la position des différents repères.
 
+```cpp
 
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_listener.h"
@@ -114,6 +115,7 @@ private:
     rclcpp::TimerBase::SharedPtr timer_;
 };
 
+```
 ### C. Diffuser une TF Dynamique (Dynamic Broadcaster)
 Utile pour modéliser le mouvement en temps réel d'une pièce mobile (bras robotique) ou du robot lui-même (odométrie). 
 
@@ -169,3 +171,5 @@ private:
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
+
+```
