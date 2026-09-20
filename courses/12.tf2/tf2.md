@@ -63,6 +63,11 @@ private:
     std::shared_ptr<tf2_ros::StaticTransformBroadcaster> tf_static_broadcaster_;
 };
 
+
+### B. Ecouter une TF Statique ou dynamique (Tf listener)
+Utile pour écouter la position des différents repères.
+
+
 #include "rclcpp/rclcpp.hpp"
 #include "tf2_ros/transform_listener.h"
 #include "tf2_ros/buffer.h"
@@ -106,5 +111,61 @@ private:
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+    rclcpp::TimerBase::SharedPtr timer_;
+};
+
+### C. Diffuser une TF Dynamique (Dynamic Broadcaster)
+Utile pour modéliser le mouvement en temps réel d'une pièce mobile (bras robotique) ou du robot lui-même (odométrie). 
+
+*Différences clés avec le statique :* 
+1. Utilisation de `tf2_ros::TransformBroadcaster` (sans le mot "Static").
+2. L'envoi se fait dans une boucle continue (via un Timer ou un callback d'odométrie).
+
+```cpp
+#include "rclcpp/rclcpp.hpp"
+#include "tf2_ros/transform_broadcaster.h"
+#include "geometry_msgs/msg/transform_stamped.hpp"
+#include <cmath>
+
+class DynamicTfPublisher : public rclcpp::Node {
+public:
+    DynamicTfPublisher() : Node("dynamic_tf_publisher") {
+        // 1. Initialiser le broadcaster dynamique
+        tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
+        // 2. Créer un timer pour publier la position en boucle (ex: à 50 Hz -> 20ms)
+        timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(20),
+            std::bind(&DynamicTfPublisher::on_timer, this));
+    }
+
+private:
+    void on_timer() {
+        // Cette fonction tourne 50 fois par seconde
+        geometry_msgs::msg::TransformStamped t;
+
+        // Mise à jour temporelle cruciale : on prend l'heure ACTUELLE à chaque boucle
+        t.header.stamp = this->get_clock()->now();
+        t.header.frame_id = "odom";       // Repère de départ
+        t.child_frame_id = "base_link";   // Le robot qui bouge
+
+        // Simulation d'un mouvement : le robot avance en ligne droite (Translation)
+        // (Dans la vraie vie, ces chiffres viendraient des encodeurs de tes roues)
+        double time_sec = this->get_clock()->now().seconds();
+        t.transform.translation.x = 0.5 * time_sec; // Il avance de 0.5m par seconde
+        t.transform.translation.y = 0.0;
+        t.transform.translation.z = 0.0;
+
+        // Pas de rotation pour cet exemple
+        t.transform.rotation.x = 0.0;
+        t.transform.rotation.y = 0.0;
+        t.transform.rotation.z = 0.0;
+        t.transform.rotation.w = 1.0; 
+
+        // 3. Envoyer la TF mise à jour
+        tf_broadcaster_->sendTransform(t);
+    }
+
+    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
     rclcpp::TimerBase::SharedPtr timer_;
 };
