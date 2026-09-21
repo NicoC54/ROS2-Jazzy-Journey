@@ -1,4 +1,6 @@
-Voici ta fiche de révision améliorée. J'y ai intégré les "questions pièges" d'entretien dont nous avons discuté (le faux multi-threading, le retour aux Mutex manuels) et j'ai précisé les définitions techniques pour que tu sois incollable. J'ai également inclus un code C++ complet et corrigé pour illustrer les options.
+Voici la version finale et ultime de ta fiche. J'ai ajouté deux nouvelles sections (les parties 5 et 6) pour intégrer la fameuse **matrice de décision (Comment choisir son groupe)** et la **nuance fondamentale sur les Publishers**.
+
+J'ai également remis la coloration syntaxique sur ton code C++ pour que ce soit parfait.
 
 ---
 
@@ -42,20 +44,51 @@ Pour encadrer le `MultiThreadedExecutor`, on utilise des groupes logiques pour r
 1. **Le piège du "Faux Multi-Threading" :** Placer *tous* les callbacks d'un nœud dans un seul et unique `MutuallyExclusiveCallbackGroup` avec un `MultiThreadedExecutor` annule tout parallélisme. Cela revient à recréer un `SingleThreadedExecutor`, mais en consommant plus de ressources.
 2. **Le retour aux Mutex manuels (`std::scoped_lock`) :** Les Callback Groups ne gèrent que des règles simples par groupe. Si des règles croisées complexes sont nécessaires (ex: *A et B peuvent tourner en parallèle, mais C est incompatible avec A et B*), les groupes ne suffisent plus. Il faut alors placer les callbacks dans un groupe Réentrant et utiliser manuellement des Mutex C++ à l'intérieur des fonctions pour un contrôle chirurgical.
 
-## 4. Le lien technique : La configuration via les "Options"
+## 4. Architecture : Comment choisir son Callback Group ? (Matrice de Décision)
 
-En ROS 2, la façon d'associer un Callback Group à une fonction dépend de la nature de cette fonction (Réseau vs Interne).
+En entretien, face à une architecture, on se pose 3 questions pour classer un callback :
 
-### Pour les Subscribers (Réseau) : La classe `SubscriptionOptions`
-- **Le pattern de l'objet de configuration :** La fonction `create_subscription` possède déjà de nombreux paramètres obligatoires (QoS, topic, callback). Au lieu de la surcharger, ROS 2 regroupe tous les réglages avancés dans un objet unique appelé `SubscriptionOptions`.
-- **L'attribut clé :** On utilise `options.callback_group = notre_groupe;` pour associer l'abonnement à notre groupe avant de passer l'ensemble à la fonction.
-- *(Note : Le même principe s'applique aux éditeurs avec `PublisherOptions`).*
+1. **Modifie-t-il une variable partagée de la classe ?** (ex: `this->position = ...`)
+* **OUI :** Danger de corruption. 👉 `MutuallyExclusiveCallbackGroup`.
+* **NON :** Calcul pur (stateless). 👉 `ReentrantCallbackGroup`.
 
-### ⚠️ Pour les Timers (Interne) : Pas d'objet "Options"
-- Contrairement à un Subscriber, un Timer ne communique pas sur le réseau. Il n'a pas besoin de réglages complexes comme les QoS. 
-- **Piège à éviter :** On ne peut **pas** passer un `SubscriptionOptions` à un Timer. L'API C++ ne l'accepte pas.
-- **La solution :** Pour un Timer, l'API est allégée. On passe directement le groupe en argument de la fonction `create_wall_timer(periode, callback, notre_groupe)`.
-## 5. Exemple de Code C++ (Mise en œuvre propre)
+
+2. **Communique-t-il directement avec du matériel physique ?** (ex: bus CAN, port USB)
+* **OUI :** Pour éviter d'envoyer des signaux brouillés en simultané. 👉 `MutuallyExclusiveCallbackGroup`.
+
+
+3. **Fait-il un appel synchrone à un Service ROS 2 ?** (Le piège du Deadlock)
+* **OUI :** Si un Timer appelle un Service et attend la réponse dans un groupe exclusif, la réponse du service ne pourra pas entrer dans ce même groupe verrouillé !
+* 👉 **Choix obligatoire :** Mettre le Timer et la réponse du Service dans des groupes *différents*, ou utiliser un `ReentrantCallbackGroup`.
+
+
+
+> **Règle d'or de l'architecte :** Par défaut, créez des `MutuallyExclusiveCallbackGroups` séparés par sous-systèmes (ex: 1 boîte pour la vision, 1 boîte pour le mouvement). N'utilisez le `Reentrant` que si c'est strictement nécessaire pour la performance.
+
+## 5. Le lien technique : La configuration via les "Options"
+
+En ROS 2, la façon d'associer un Callback Group dépend de la nature de la fonction (Réseau vs Interne).
+
+* **Pour les Subscribers (Réseau) : La classe `SubscriptionOptions**`
+* **Le pattern de l'objet de configuration :** La fonction `create_subscription` possède déjà de nombreux paramètres obligatoires (QoS, topic, callback). Au lieu de la surcharger, ROS 2 regroupe tous les réglages avancés dans un objet unique appelé `SubscriptionOptions`.
+* **L'attribut clé :** On utilise `options.callback_group = notre_groupe;` pour associer l'abonnement à notre groupe avant de passer l'ensemble à la fonction.
+
+
+* **⚠️ Pour les Timers (Interne) : Pas d'objet "Options"**
+* Contrairement à un Subscriber, un Timer ne communique pas sur le réseau. Il n'a pas besoin de réglages complexes comme les QoS.
+* **Piège à éviter :** On ne peut **pas** passer un `SubscriptionOptions` à un Timer.
+* **La solution :** Pour un Timer, l'API est allégée. On passe directement le groupe en argument de la fonction `create_wall_timer(periode, callback, notre_groupe)`.
+
+
+
+## 6. L'exception du Publisher : Action vs Réaction
+
+L'Executor gère les **réactions** (les callbacks asynchrones comme les Timers et Subscribers).
+
+* Un **Publisher** est une **action** synchrone (un simple "mégaphone"). Il ne possède pas de callback pour l'envoi de données.
+* **Conclusion :** On n'associe pas l'action de publier à un Callback Group. Le Publisher attend sagement que l'on appelle sa méthode `publish()` **à l'intérieur** d'une fonction callback (ex: dans la fonction d'un Timer rangé dans le groupe Réentrant).
+
+## 7. Exemple de Code C++ (Mise en œuvre propre)
 
 ```cpp
 #include "rclcpp/rclcpp.hpp"
@@ -91,6 +124,9 @@ public:
             500ms,
             std::bind(&MonNoeudConcurrent::callbackTimer, this),
             groupe_reentrant_); // Pour les timers, le groupe passe en 3ème argument
+            
+        // 5. Création du Publisher (Pas de Callback Group !)
+        publisher_ = this->create_publisher<std_msgs::msg::String>("topic_sortie", 10);
     }
 
 private:
@@ -102,6 +138,10 @@ private:
     void callbackTimer()
     {
         RCLCPP_INFO(this->get_logger(), "Traitement timer (réentrant) en parallèle.");
+        // Le Publisher est utilisé ICI, à l'intérieur de l'événement Timer
+        auto msg = std_msgs::msg::String();
+        msg.data = "Tick Timer";
+        publisher_->publish(msg);
     }
 
     // Pointeurs intelligents vers nos groupes et objets
@@ -109,6 +149,7 @@ private:
     rclcpp::CallbackGroup::SharedPtr groupe_reentrant_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscription_capteur_;
     rclcpp::TimerBase::SharedPtr timer_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
 };
 
 int main(int argc, char * argv[])
