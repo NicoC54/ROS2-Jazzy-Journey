@@ -1,6 +1,6 @@
-Voici la version finale et ultime de ta fiche. J'ai ajouté deux nouvelles sections (les parties 5 et 6) pour intégrer la fameuse **matrice de décision (Comment choisir son groupe)** et la **nuance fondamentale sur les Publishers**.
+Voici la version finale, complète et restructurée de ta fiche technique. Elle rassemble absolument tous les concepts, les pièges d'entretien, les analogies pour bien mémoriser, et le code C++ parfait.
 
-J'ai également remis la coloration syntaxique sur ton code C++ pour que ce soit parfait.
+Tu peux copier-coller ce bloc entier dans ton outil de prise de notes (Notion, Obsidian, Markdown...) !
 
 ---
 
@@ -44,7 +44,21 @@ Pour encadrer le `MultiThreadedExecutor`, on utilise des groupes logiques pour r
 1. **Le piège du "Faux Multi-Threading" :** Placer *tous* les callbacks d'un nœud dans un seul et unique `MutuallyExclusiveCallbackGroup` avec un `MultiThreadedExecutor` annule tout parallélisme. Cela revient à recréer un `SingleThreadedExecutor`, mais en consommant plus de ressources.
 2. **Le retour aux Mutex manuels (`std::scoped_lock`) :** Les Callback Groups ne gèrent que des règles simples par groupe. Si des règles croisées complexes sont nécessaires (ex: *A et B peuvent tourner en parallèle, mais C est incompatible avec A et B*), les groupes ne suffisent plus. Il faut alors placer les callbacks dans un groupe Réentrant et utiliser manuellement des Mutex C++ à l'intérieur des fonctions pour un contrôle chirurgical.
 
-## 4. Architecture : Comment choisir son Callback Group ? (Matrice de Décision)
+## 4. 🌟 Zoom : Le secret du vrai Multi-Threading (Multiplier les boîtes exclusives)
+
+Il est fondamental de comprendre que l'on peut (et que l'on doit) créer **plusieurs** `MutuallyExclusiveCallbackGroup` au sein d'un même nœud.
+
+* **La règle :** Les fonctions d'une *même* boîte exclusive ne peuvent pas tourner en même temps.
+* **La magie :** Les fonctions de la *Boîte A* **peuvent** s'exécuter en même temps que les fonctions de la *Boîte B* !
+
+> **L'analogie de la cuisine (2 Chefs = 2 Threads) :**
+> * **Boîte 1 (Le Four) :** Un seul chef peut utiliser le four à la fois.
+> * **Boîte 2 (Le Mixeur) :** Un seul chef peut utiliser le mixeur à la fois.
+> * **Résultat :** Le Chef A peut utiliser le mixeur *exactement en même temps* que le Chef B utilise le four. C'est du parallélisme sécurisé !
+> 
+> 
+
+## 5. Architecture : Comment choisir son Callback Group ? (Matrice de Décision)
 
 En entretien, face à une architecture, on se pose 3 questions pour classer un callback :
 
@@ -63,9 +77,9 @@ En entretien, face à une architecture, on se pose 3 questions pour classer un c
 
 
 
-> **Règle d'or de l'architecte :** Par défaut, créez des `MutuallyExclusiveCallbackGroups` séparés par sous-systèmes (ex: 1 boîte pour la vision, 1 boîte pour le mouvement). N'utilisez le `Reentrant` que si c'est strictement nécessaire pour la performance.
+> **Règle d'or de l'architecte :** Par défaut, créez **plusieurs** `MutuallyExclusiveCallbackGroups` séparés par sous-systèmes (ex: 1 boîte pour la vision, 1 boîte pour les moteurs). N'utilisez le `Reentrant` que si c'est strictement nécessaire pour la performance de fonctions indépendantes.
 
-## 5. Le lien technique : La configuration via les "Options"
+## 6. Le lien technique : La configuration via les "Options"
 
 En ROS 2, la façon d'associer un Callback Group dépend de la nature de la fonction (Réseau vs Interne).
 
@@ -81,18 +95,20 @@ En ROS 2, la façon d'associer un Callback Group dépend de la nature de la fonc
 
 
 
-## 6. L'exception du Publisher : Action vs Réaction
+## 7. L'exception du Publisher : Action vs Réaction
 
 L'Executor gère les **réactions** (les callbacks asynchrones comme les Timers et Subscribers).
 
 * Un **Publisher** est une **action** synchrone (un simple "mégaphone"). Il ne possède pas de callback pour l'envoi de données.
-* **Conclusion :** On n'associe pas l'action de publier à un Callback Group. Le Publisher attend sagement que l'on appelle sa méthode `publish()` **à l'intérieur** d'une fonction callback (ex: dans la fonction d'un Timer rangé dans le groupe Réentrant).
+* **Conclusion :** On n'associe pas l'action de publier à un Callback Group. Le Publisher attend sagement que l'on appelle sa méthode `publish()` **à l'intérieur** d'une fonction callback (ex: dans la fonction d'un Timer rangé dans son propre groupe).
 
-## 7. Exemple de Code C++ (Mise en œuvre propre)
+## 8. Exemple de Code C++ (Mise en œuvre propre)
 
 ```cpp
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "sensor_msgs/msg/image.hpp"
+#include "geometry_msgs/msg/twist.hpp"
 
 using namespace std::chrono_literals;
 
@@ -101,41 +117,55 @@ class MonNoeudConcurrent : public rclcpp::Node
 public:
     MonNoeudConcurrent() : Node("noeud_concurrent")
     {
-        // 1. Création de Callback Groups distincts
-        groupe_exclusif_ = this->create_callback_group(
+        // 1. Création de MULTIPLES Callback Groups distincts
+        groupe_vision_ = this->create_callback_group(
+            rclcpp::CallbackGroupType::MutuallyExclusive);
+            
+        groupe_moteurs_ = this->create_callback_group(
             rclcpp::CallbackGroupType::MutuallyExclusive);
         
         groupe_reentrant_ = this->create_callback_group(
             rclcpp::CallbackGroupType::Reentrant);
 
-        // 2. Configuration de l'objet SubscriptionOptions pour le capteur
-        rclcpp::SubscriptionOptions options_exclusives;
-        options_exclusives.callback_group = groupe_exclusif_;
+        // 2. Configuration des objets SubscriptionOptions
+        rclcpp::SubscriptionOptions options_vision;
+        options_vision.callback_group = groupe_vision_;
 
-        // 3. Création du Subscriber (lié au groupe exclusif via les options)
-        subscription_capteur_ = this->create_subscription<std_msgs::msg::String>(
-            "capteur_donnees", 
-            10, // Taille de la file (QoS basique)
-            std::bind(&MonNoeudConcurrent::callbackCapteur, this, std::placeholders::_1),
-            options_exclusives); // L'étiquette de configuration !
+        rclcpp::SubscriptionOptions options_moteurs;
+        options_moteurs.callback_group = groupe_moteurs_;
 
-        // 4. Création du Timer (lié au groupe réentrant, passé directement)
-        timer_ = this->create_wall_timer(
-            500ms,
-            std::bind(&MonNoeudConcurrent::callbackTimer, this),
-            groupe_reentrant_); // Pour les timers, le groupe passe en 3ème argument
+        // 3. Création des Subscribers (liés à des groupes exclusifs DIFFÉRENTS)
+        // La vision et les moteurs tourneront en parallèle sans jamais se bloquer !
+        sub_camera_ = this->create_subscription<sensor_msgs::msg::Image>(
+            "camera/image", 10, 
+            std::bind(&MonNoeudConcurrent::cb_vision, this, std::placeholders::_1), 
+            options_vision);
             
-        // 5. Création du Publisher (Pas de Callback Group !)
+        sub_cmd_vel_ = this->create_subscription<geometry_msgs::msg::Twist>(
+            "cmd_vel", 10, 
+            std::bind(&MonNoeudConcurrent::cb_moteurs, this, std::placeholders::_1), 
+            options_moteurs);
+
+        // 4. Création du Timer (lié au groupe réentrant, groupe passé directement)
+        timer_ = this->create_wall_timer(
+            500ms, std::bind(&MonNoeudConcurrent::cb_timer, this), groupe_reentrant_);
+            
+        // 5. Création du Publisher (Pas de Callback Group, c'est une action !)
         publisher_ = this->create_publisher<std_msgs::msg::String>("topic_sortie", 10);
     }
 
 private:
-    void callbackCapteur(const std_msgs::msg::String::SharedPtr msg)
+    void cb_vision(const sensor_msgs::msg::Image::SharedPtr msg)
     {
-        RCLCPP_INFO(this->get_logger(), "Traitement exclusif : %s", msg->data.c_str());
+        RCLCPP_INFO(this->get_logger(), "Traitement lourd de l'image (Exclusif Vision)");
+    }
+    
+    void cb_moteurs(const geometry_msgs::msg::Twist::SharedPtr msg)
+    {
+        RCLCPP_INFO(this->get_logger(), "Commande envoyée aux roues (Exclusif Moteurs)");
     }
 
-    void callbackTimer()
+    void cb_timer()
     {
         RCLCPP_INFO(this->get_logger(), "Traitement timer (réentrant) en parallèle.");
         // Le Publisher est utilisé ICI, à l'intérieur de l'événement Timer
@@ -145,9 +175,12 @@ private:
     }
 
     // Pointeurs intelligents vers nos groupes et objets
-    rclcpp::CallbackGroup::SharedPtr groupe_exclusif_;
+    rclcpp::CallbackGroup::SharedPtr groupe_vision_;
+    rclcpp::CallbackGroup::SharedPtr groupe_moteurs_;
     rclcpp::CallbackGroup::SharedPtr groupe_reentrant_;
-    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr subscription_capteur_;
+    
+    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub_camera_;
+    rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr sub_cmd_vel_;
     rclcpp::TimerBase::SharedPtr timer_;
     rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
 };
@@ -157,13 +190,13 @@ int main(int argc, char * argv[])
     rclcpp::init(argc, argv);
     auto node = std::make_shared<MonNoeudConcurrent>();
 
-    // Instanciation de l'Executor avec 2 threads explicites
+    // Instanciation de l'Executor avec 3 threads explicites (1 vision, 1 moteur, 1 timer)
     rclcpp::executors::MultiThreadedExecutor executor(
-        rclcpp::executors::MultiThreadedExecutorOptions(), 2);
+        rclcpp::executors::MultiThreadedExecutorOptions(), 3);
     
     executor.add_node(node);
     
-    // Bloque le thread principal et laisse l'Executor gérer les 2 threads de travail
+    // Bloque le thread principal et laisse l'Executor gérer les threads de travail
     executor.spin(); 
     
     rclcpp::shutdown();
